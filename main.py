@@ -274,8 +274,6 @@ class SMART_RELAY():
             if len(strData) == 4:
                 hours = int(strData[0:2])
                 minutes = int(strData[2:4])
-
-
         return res
 
 
@@ -319,13 +317,11 @@ class SMART_RELAY():
         return server_ip, port
 
     def setMacAddr(self):
-        # res = os.popen('ifconfig br-wlan | grep HWaddr').readline()
-        # self.macAddr = res.lstrip().split('HWaddr')[1][1:-1].replace(':','').replace(' ', '')
-        self.macAddr = '40A36BC7B3B7'
+        res = os.popen('ifconfig br-wlan | grep HWaddr').readline()
+        self.macAddr = res.lstrip().split('HWaddr')[1][1:-1].replace(':','').replace(' ', '')
 
     def checkNetwork(self):
-        # res = os.popen('ping -c 1 -W 1 -w 1 8.8.8.8 | grep loss').readline()
-        res = '0.0%'
+        res = os.popen('ping -c 1 -W 1 -w 1 8.8.8.8 | grep loss').readline()
         if '100%' in res:
             self.network_led.setValue(0)
             self.server_led.setValue(0)
