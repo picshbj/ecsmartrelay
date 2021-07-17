@@ -141,7 +141,7 @@ class SMART_RELAY():
                             try:
                                 if float(self.CH1_RunCommand['period']) > float(VERSION):
                                     # update here
-                                    os.system('python3 /usr/bin/updater.py')
+                                    os.system('python3 /root/updater.py')
                             except Exception as e:
                                 print(e)
 
