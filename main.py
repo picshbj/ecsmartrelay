@@ -11,6 +11,7 @@ import os
 import onionGpio
 import threading
 import time
+import pickle
 
 VERSION = '1.0'
 
@@ -19,6 +20,14 @@ class SMART_RELAY():
         # init mac address
         self.macAddr = ''
         self.setMacAddr()
+
+        self.startedTime_1 = 0
+        self.startedTime_2 = 0
+        self.startedTime_3 = 0
+        self.autoTimeLimit_1 = 0
+        self.autoTimeLimit_2 = 0
+        self.autoTimeLimit_3 = 0
+        
 
         # get server address and port
         self.server_ip, self.port = self.getServerInfo()
@@ -51,8 +60,8 @@ class SMART_RELAY():
             self.relay1 = onionGpio.OnionGpio(15)
             self.relay2 = onionGpio.OnionGpio(16)
             self.relay3 = onionGpio.OnionGpio(17)
-            self.waterSensor_H = onionGpio.OnionGpio(18)
-            self.waterSensor_L = onionGpio.OnionGpio(19)
+            self.waterSensor_H = onionGpio.OnionGpio(19)
+            self.waterSensor_L = onionGpio.OnionGpio(18)
             self.network_led = onionGpio.OnionGpio(2)
             self.server_led = onionGpio.OnionGpio(3)
             self.waterSensor_H_led = onionGpio.OnionGpio(1)
@@ -68,13 +77,17 @@ class SMART_RELAY():
             self.waterSensor_H_led.setOutputDirection(0)
             self.waterSensor_L_led.setOutputDirection(0)
         except Exception:
+            # self.saveparams()
             os.system('reboot')
 
+        # self.runCommand = ''
+        self.loadparams()
+        print(self.runCommand)
 
         # init run sequence
-        self.CH1_RunCommand = self.runCommand[0]
-        self.CH2_RunCommand = self.runCommand[1]
-        self.CH3_RunCommand = self.runCommand[2]
+        self.runCommand[0] = self.runCommand[0]
+        self.runCommand[1] = self.runCommand[1]
+        self.runCommand[2] = self.runCommand[2]
         # ['Run Mode', 'Schedule', 'CurrentState']
         ### Run Mode
         # 1,0 -> [M]anual
@@ -94,6 +107,7 @@ class SMART_RELAY():
         # 3 bits for CH3 | CH2 | CH1
         # ex) 7 -> ON | ON | ON
         # ex) 5 -> ON | OFF| ON
+        self.updateSchedule()
 
         self.recv_thread_state = True
         self.run_thread_state = True
@@ -117,33 +131,82 @@ class SMART_RELAY():
 
             time.sleep(1)
 
+    def saveparams(self):
+        with open('/root/params.pickle', 'wb') as fw:
+            pickle.dump(self.runCommand, fw)
+    
+    def loadparams(self):
+        try:
+            if os.path.isfile('/root/params.pickle'):
+                with open('/root/params.pickle', 'rb') as fr:
+                    self.runCommand = pickle.load(fr)
+
+            else:
+                self.runCommand = [
+                    {'mode': '0', 
+                    'schedule': '',
+                    'period': '',
+                    'autoModeMsg': '',
+                    'currentState': 0,
+                    'autoTimeLimit': 0},
+                    {'mode': '0', 
+                    'schedule': '',
+                    'period': '',
+                    'autoModeMsg': '',
+                    'currentState': 0,
+                    'autoTimeLimit': 0},
+                    {'mode': '0', 
+                    'schedule': '',
+                    'period': '',
+                    'autoModeMsg': '',
+                    'currentState': 0,
+                    'autoTimeLimit': 0}
+                ]
+        except Exception:
+            pass
+
+        self.autoTimeLimit_1 = self.runCommand[0]['autoTimeLimit']
+        self.autoTimeLimit_2 = self.runCommand[1]['autoTimeLimit']
+        self.autoTimeLimit_3 = self.runCommand[2]['autoTimeLimit']
+        
+
+
     def recv_process(self):
         while True:
             if self.recv_thread_state:
                 try:
                     res = requests.post(self.URL, headers=self.headers, data=json.dumps(self.runCommand))
                     if res.status_code==200 and len(res.json()):
-                        self.runCommand = res.json()
+                        self.tmp = res.json()
                         print(self.runCommand)
                         #[{'mode': 'x', 'schedule': None, 'period': None, 'autoModeMsg': None, 'currentState': 0, 'autoTimeLimit': 0}, 
                         # {'mode': 'x', 'schedule': None, 'period': None, 'autoModeMsg': None, 'currentState': 0, 'autoTimeLimit': 0}, 
                         # {'mode': 'a', 'schedule': None, 'period': None, 'autoModeMsg': None, 'currentState': 0, 'autoTimeLimit': 6430}]
-                        if self.runCommand[0]['mode'] != 'x':
-                            self.CH1_RunCommand = self.runCommand[0]
-                        if self.runCommand[1]['mode'] != 'x':
-                            self.CH2_RunCommand = self.runCommand[1]
-                        if self.runCommand[2]['mode'] != 'x':
-                            self.CH3_RunCommand = self.runCommand[2]
+                        if self.tmp[0]['mode'] != 'x':
+                            self.runCommand[0] = self.tmp[0]
+                            self.autoTimeLimit_1 = self.tmp[0]['autoTimeLimit']
+                            self.saveparams()
+                        if self.tmp[1]['mode'] != 'x':
+                            self.runCommand[1] = self.tmp[1]
+                            self.autoTimeLimit_2 = self.tmp[1]['autoTimeLimit']
+                            self.saveparams()
+                        if self.tmp[2]['mode'] != 'x':
+                            self.runCommand[2] = self.tmp[2]
+                            self.autoTimeLimit_3 = self.tmp[2]['autoTimeLimit']
+                            self.saveparams()
                         self.server_led.setValue(1)
 
                         # update
-                        if self.runCommand[0]['mode'] == 'u' or self.runCommand[1]['mode'] != 'u' or self.runCommand[2]['mode'] != 'u':
+                        if self.runCommand[0]['mode'] == 'u' or self.runCommand[1]['mode'] == 'u' or self.runCommand[2]['mode'] == 'u':
                             try:
-                                if float(self.CH1_RunCommand['period']) > float(VERSION):
+                                if float(self.runCommand[0]['period']) > float(VERSION):
                                     # update here
                                     os.system('python3 /root/updater.py')
                             except Exception as e:
                                 print(e)
+                        
+                        if self.runCommand[0]['mode'] == 's' or self.runCommand[1]['mode'] == 's' or self.runCommand[2]['mode'] == 's' or self.runCommand[0]['mode'] == 'r' or self.runCommand[1]['mode'] == 'r' or self.runCommand[2]['mode'] == 'r':
+                            self.updateSchedule()
 
 
                     elif res.status_code==200:
@@ -165,6 +228,7 @@ class SMART_RELAY():
     def run_process(self):
         toggle = True
         today = -1
+        autoToggle = False
         while True:
             if self.run_thread_state:
                 now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9)))
@@ -184,11 +248,11 @@ class SMART_RELAY():
                     CH2 = (runbit%4)//2
                     CH1 = runbit%2
 
-                    if self.CH1_RunCommand['mode'] == 's' or self.CH1_RunCommand['mode'] == 'r':
+                    if self.runCommand[0]['mode'] == 's' or self.runCommand[0]['mode'] == 'r':
                         self.setRelay(1, CH1)
-                    if self.CH2_RunCommand['mode'] == 's' or self.CH2_RunCommand['mode'] == 'r':
+                    if self.runCommand[1]['mode'] == 's' or self.runCommand[1]['mode'] == 'r':
                         self.setRelay(2, CH2)
-                    if self.CH3_RunCommand['mode'] == 's' or self.CH3_RunCommand['mode'] == 'r':
+                    if self.runCommand[2]['mode'] == 's' or self.runCommand[2]['mode'] == 'r':
                         self.setRelay(3, CH3)
                     toggle = False
                 else:
@@ -203,25 +267,37 @@ class SMART_RELAY():
                 self.waterSensor_L_led.setValue(low)
 
                 if low and high:    # Water tank Full
-                    if self.CH1_RunCommand['mode'] == 'a': self.setRelay(1, 1)
-                    if self.CH2_RunCommand['mode'] == 'a': self.setRelay(2, 1)
-                    if self.CH3_RunCommand['mode'] == 'a': self.setRelay(3, 1)
+                    if self.runCommand[0]['mode'] == 'a': self.setRelay(1, 1)
+                    if self.runCommand[1]['mode'] == 'a': self.setRelay(2, 1)
+                    if self.runCommand[2]['mode'] == 'a': self.setRelay(3, 1)
+                    autoToggle = False
                 elif not low and not high: # Water tank Empty
-                    if self.CH1_RunCommand['mode'] == 'a': self.setRelay(1, 0)
-                    if self.CH2_RunCommand['mode'] == 'a': self.setRelay(2, 0)
-                    if self.CH3_RunCommand['mode'] == 'a': self.setRelay(3, 0)
+                    if not autoToggle:
+                        if self.runCommand[0]['mode'] == 'a': self.setRelay(1, 0)
+                        if self.runCommand[1]['mode'] == 'a': self.setRelay(2, 0)
+                        if self.runCommand[2]['mode'] == 'a': self.setRelay(3, 0)
+                        self.startedTime_1 = self.startedTime_2 = self.startedTime_3 = time.time()
+                        autoToggle = True
 
-                if self.CH1_RunCommand['mode'] == '1':
-                    self.setRelay(1, 0)
-                elif self.CH1_RunCommand['mode'] == '0':
+                if self.runCommand[0]['mode'] == 'a' and time.time() - self.startedTime_1 > self.autoTimeLimit_1:
                     self.setRelay(1, 1)
-                if self.CH2_RunCommand['mode'] == '1':
-                    self.setRelay(2, 0)
-                elif self.CH2_RunCommand['mode'] == '0':
+                if self.runCommand[1]['mode'] == 'a' and time.time() - self.startedTime_2 > self.autoTimeLimit_2:
                     self.setRelay(2, 1)
-                if self.CH3_RunCommand['mode'] == '1':
+                if self.runCommand[2]['mode'] == 'a' and time.time() - self.startedTime_3 > self.autoTimeLimit_3:
+                    self.setRelay(3, 1)
+                # print(time.time() - self.startedTime_3, self.autoTimeLimit_3)
+
+                if self.runCommand[0]['mode'] == '1':
+                    self.setRelay(1, 0)
+                elif self.runCommand[0]['mode'] == '0':
+                    self.setRelay(1, 1)
+                if self.runCommand[1]['mode'] == '1':
+                    self.setRelay(2, 0)
+                elif self.runCommand[1]['mode'] == '0':
+                    self.setRelay(2, 1)
+                if self.runCommand[2]['mode'] == '1':
                     self.setRelay(3, 0)
-                elif self.CH3_RunCommand['mode'] == '0':
+                elif self.runCommand[2]['mode'] == '0':
                     self.setRelay(3, 1)
                     
             time.sleep(0.5)
@@ -229,11 +305,10 @@ class SMART_RELAY():
 
     def updateSchedule(self):
         try:
-            today = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9))).weekday()
-            ch1 = self.convert_schedule_to_minuteSequence(self.CH1_RunCommand['mode'], self.CH1_RunCommand['schedule'].split('/')[today])  # ex) 23000200,06000910
-            ch2 = self.convert_schedule_to_minuteSequence(self.CH2_RunCommand['mode'], self.CH2_RunCommand['schedule'].split('/')[today])
-            ch3 = self.convert_schedule_to_minuteSequence(self.CH3_RunCommand['mode'], self.CH3_RunCommand['schedule'].split('/')[today])
-
+            ch1 = self.convert_schedule_to_minuteSequence(self.runCommand[0]['mode'], self.runCommand[0]['schedule'])  # ex) 23000200,06000910
+            ch2 = self.convert_schedule_to_minuteSequence(self.runCommand[1]['mode'], self.runCommand[1]['schedule'])
+            ch3 = self.convert_schedule_to_minuteSequence(self.runCommand[2]['mode'], self.runCommand[2]['schedule'])
+        
             res = list(''.zfill(60*24))
             for i in range(len(res)):
                 bit = 0
@@ -246,15 +321,17 @@ class SMART_RELAY():
                 res[i] = str(bit)
             self.Run_Schedule = ''.join(res)
         except Exception as e:
-            print(e)
+            print(22, e)
 
 
     def convert_schedule_to_minuteSequence(self, mode, strData):
         # EX
         # input     : strData = 23000200,06000910
         # output    : 1440 byte minute sequence
+        today = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9))).weekday()
         res = ''.zfill(60*24)
-        if mode == 'S':
+        if mode == 's':
+            strData = strData.split('/')[today]
             for data in strData.split(','):
                 if data == '0':
                     break
@@ -270,7 +347,7 @@ class SMART_RELAY():
                     res = ''.join(res)
                 else:
                     print('schedule parsing error')
-        elif mode == 'R':
+        elif mode == 'r':
             if len(strData) == 4:
                 hours = int(strData[0:2])
                 minutes = int(strData[2:4])
