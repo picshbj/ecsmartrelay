@@ -285,7 +285,7 @@ class SMART_RELAY():
                 break
 
             time.sleep(10)
-        self.msg_logging('reboot\n')
+        # self.msg_logging('reboot\n')
         os.system('reboot')
 
 
