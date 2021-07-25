@@ -20,14 +20,14 @@ class SMART_RELAY():
         # init mac address
         self.macAddr = ''
         self.setMacAddr()
+        self.reboot_signal = False
 
         self.startedTime_1 = 0
         self.startedTime_2 = 0
         self.startedTime_3 = 0
         self.autoTimeLimit_1 = 0
         self.autoTimeLimit_2 = 0
-        self.autoTimeLimit_3 = 0
-        
+        self.autoTimeLimit_3 = 0    
 
         # get server address and port
         self.server_ip, self.port = self.getServerInfo()
@@ -78,6 +78,7 @@ class SMART_RELAY():
             self.waterSensor_L_led.setOutputDirection(0)
         except Exception:
             # self.saveparams()
+            self.reboot_signal = True
             os.system('reboot')
 
         # self.runCommand = ''
@@ -121,6 +122,7 @@ class SMART_RELAY():
         # create and run thread
         self.recv_th = threading.Thread(target=self.recv_process, args=())
         self.recv_th.start()
+    
 
     def network_watchdog(self):
         while True:
@@ -128,6 +130,9 @@ class SMART_RELAY():
                 self.recv_thread_state = True
             else:
                 self.recv_thread_state = False
+
+            if self.reboot_signal:
+                break
 
             time.sleep(1)
 
@@ -169,16 +174,57 @@ class SMART_RELAY():
         self.autoTimeLimit_2 = self.runCommand[1]['autoTimeLimit']
         self.autoTimeLimit_3 = self.runCommand[2]['autoTimeLimit']
         
+    def json_logging(self, data):
+        self.resultFile = open('/root/output.txt', 'a')
+        now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9)))
+        current_time = '[%d-%02d-%02d %02d:%02d:%02d]-----------------------------------------\n' % (now.year, now.month, now.day, now.hour, now.minute, now.second)
+        self.resultFile.write(current_time)
+        for i in range(3):
+            mode = data[i]['mode']
+            
+            if data[i]['schedule'] == None:
+                schedule = 'None'
+            else:
+                schedule = data[i]['schedule']
 
+            if data[i]['period'] == None:
+                period = 'None'
+            else:
+                period = data[i]['period']
+
+            if data[i]['autoModeMsg'] == None:
+                autoModeMsg = 'None'
+            else:
+                autoModeMsg = data[i]['autoModeMsg']
+
+            currentState = str(data[i]['currentState'])
+            autoTimeLimit = str(data[i]['autoTimeLimit'])
+
+            sData = "{'mode': %s, 'schedule': %s, 'period': %s, 'autoModeMsg': %s, 'currentState': %s, 'autoTimeLimit': %s}\n" % (mode, schedule, period, autoModeMsg, currentState, autoTimeLimit)
+            self.resultFile.write(sData)
+        self.resultFile.close()
+
+    def msg_logging(self, data):
+        self.resultFile = open('/root/output.txt', 'a')
+        now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9)))
+        current_time = '[%d-%02d-%02d %02d:%02d:%02d]-----------------------------------------\n' % (now.year, now.month, now.day, now.hour, now.minute, now.second)
+        self.resultFile.write(current_time)
+        self.resultFile.write(data)
+        self.resultFile.close()
 
     def recv_process(self):
+        count = 0
         while True:
+            if self.reboot_signal:
+                break
+
             if self.recv_thread_state:
                 try:
                     res = requests.post(self.URL, headers=self.headers, data=json.dumps(self.runCommand))
                     if res.status_code==200 and len(res.json()):
                         self.tmp = res.json()
-                        print(self.runCommand)
+                        # print(self.tmp)
+                        # self.json_logging(self.tmp)
                         #[{'mode': 'x', 'schedule': None, 'period': None, 'autoModeMsg': None, 'currentState': 0, 'autoTimeLimit': 0}, 
                         # {'mode': 'x', 'schedule': None, 'period': None, 'autoModeMsg': None, 'currentState': 0, 'autoTimeLimit': 0}, 
                         # {'mode': 'a', 'schedule': None, 'period': None, 'autoModeMsg': None, 'currentState': 0, 'autoTimeLimit': 6430}]
@@ -195,6 +241,7 @@ class SMART_RELAY():
                             self.autoTimeLimit_3 = self.tmp[2]['autoTimeLimit']
                             self.saveparams()
                         self.server_led.setValue(1)
+                        count = 0
 
                         # update
                         if self.runCommand[0]['mode'] == 'u' or self.runCommand[1]['mode'] == 'u' or self.runCommand[2]['mode'] == 'u':
@@ -202,6 +249,8 @@ class SMART_RELAY():
                                 if float(self.runCommand[0]['period']) > float(VERSION):
                                     # update here
                                     os.system('python3 /root/updater.py')
+                                    self.reboot_signal = True
+                                    break
                             except Exception as e:
                                 print(e)
                         
@@ -211,18 +260,33 @@ class SMART_RELAY():
 
                     elif res.status_code==200:
                         self.server_led.setValue(1)
+                        count = 0
+                        # self.msg_logging('response: 200, no data\n')
                     else:
                         self.server_led.setValue(0)
+                        count += 1
                         # get server address and port
-                        print('server ip reset..')
+                        # print('server ip reset..')
+                        # self.msg_logging('server ip reset..\n')
                         self.server_ip, self.port = self.getServerInfo()
                         self.URL = 'http://%s:%s/device/order/%s' % (self.server_ip, self.port, self.macAddr[-4:])
                 except Exception as e:
                     self.server_led.setValue(0)
-                    print('recv_process error')
+                    count += 1
+                    # print('recv_process error')
+                    # self.msg_logging('recv_process error\n')
                     print(e)
-                
-                time.sleep(10)
+            else:
+                count += 1
+            
+            # print('count:', count)
+            if count > 4:
+                self.reboot_signal = True
+                break
+
+            time.sleep(10)
+        self.msg_logging('reboot\n')
+        os.system('reboot')
 
 
     def run_process(self):
@@ -230,6 +294,9 @@ class SMART_RELAY():
         today = -1
         autoToggle = False
         while True:
+            if self.reboot_signal:
+                break
+
             if self.run_thread_state:
                 now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9)))
 
@@ -328,6 +395,7 @@ class SMART_RELAY():
         # EX
         # input     : strData = 23000200,06000910
         # output    : 1440 byte minute sequence
+        
         today = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9))).weekday()
         res = ''.zfill(60*24)
         if mode == 's':
@@ -347,6 +415,20 @@ class SMART_RELAY():
                     res = ''.join(res)
                 else:
                     print('schedule parsing error')
+            # self.resultFile = open('/root/output.txt', 'a')
+            # for i in range(24):
+            #     h = res[60*i:60*(i+1)]
+            #     print(i, 'hours : ', end='')
+            #     strData = '%d hours : ' % i
+            #     self.resultFile.write(strData)
+            #     for j in range(6):
+            #         strData = h[10*j:10*(j+1)] + '_'
+            #         print(strData, end='')
+            #         self.resultFile.write(strData)
+            #     print('')
+            #     self.resultFile.write('\n')
+            # self.resultFile.write('\n')
+            # self.resultFile.close()
         elif mode == 'r':
             if len(strData) == 4:
                 hours = int(strData[0:2])
@@ -371,25 +453,32 @@ class SMART_RELAY():
             elif output == 1: self.runCommand[2]['currentState'] = 0
 
     def getServerInfo(self):
-        r = requests.get(awslambdaurl)
-        ciphertext = base64.b64decode(r.text.replace('"', ''))
-        _aes = aes.AESModeOfOperationCBC(key.encode('utf-8'), iv = iv)
-        decrypted = b''
-        if len(ciphertext)%16 == 0:
-            it = len(ciphertext) // 16
-            for i in range(it):
-                decrypted += _aes.decrypt(ciphertext[i*16:(i+1)*16])
-            decrypted = unpad(decrypted).decode('utf-8')
+        try:
+            # sync time
+            os.system('onion time sync')
+            
+            r = requests.get(awslambdaurl)
+            ciphertext = base64.b64decode(r.text.replace('"', ''))
+            _aes = aes.AESModeOfOperationCBC(key.encode('utf-8'), iv = iv)
+            decrypted = b''
+            if len(ciphertext)%16 == 0:
+                it = len(ciphertext) // 16
+                for i in range(it):
+                    decrypted += _aes.decrypt(ciphertext[i*16:(i+1)*16])
+                decrypted = unpad(decrypted).decode('utf-8')
 
-        data = decrypted.split('$')
-        # print(data)
-        server_ip = ''
-        port = 0
-        for d in data:
-            if 'SMART_RELAY_SERVER' in d:
-                server_ip = d.split(',')[1]
-                port = int(d.split(',')[2])
-                break
+            data = decrypted.split('$')
+            # print(data)
+            server_ip = ''
+            port = 0
+            for d in data:
+                if 'SMART_RELAY_SERVER' in d:
+                    server_ip = d.split(',')[1]
+                    port = int(d.split(',')[2])
+                    break
+        except Exception as e:
+            print('network error.. reboot...')
+            os.system('reboot')
 
         return server_ip, port
 
@@ -411,5 +500,5 @@ class SMART_RELAY():
 if __name__ == '__main__':
 
     sr = SMART_RELAY()
-    while True:
+    while not sr.reboot_signal:
         pass
