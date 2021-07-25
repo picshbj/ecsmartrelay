@@ -13,7 +13,7 @@ import threading
 import time
 import pickle
 
-VERSION = '1.1'
+VERSION = '1.2'
 
 class SMART_RELAY():
     def __init__(self):
@@ -27,7 +27,8 @@ class SMART_RELAY():
         self.startedTime_3 = 0
         self.autoTimeLimit_1 = 0
         self.autoTimeLimit_2 = 0
-        self.autoTimeLimit_3 = 0    
+        self.autoTimeLimit_3 = 0
+        self.isAutoMsg = -1
 
         # get server address and port
         self.server_ip, self.port = self.getServerInfo()
@@ -169,7 +170,7 @@ class SMART_RELAY():
                 ]
         except Exception:
             pass
-
+        
         self.autoTimeLimit_1 = self.runCommand[0]['autoTimeLimit']
         self.autoTimeLimit_2 = self.runCommand[1]['autoTimeLimit']
         self.autoTimeLimit_3 = self.runCommand[2]['autoTimeLimit']
@@ -220,6 +221,14 @@ class SMART_RELAY():
 
             if self.recv_thread_state:
                 try:
+                    if self.isAutoMsg != -1:
+                        self.runCommand[self.isAutoMsg]['autoModeMsg'] = '수위센서 이상이 감지되어 릴레이 작동을 중지하였습니다. 센서를 확인해주세요.'
+                        self.isAutoMsg = -1
+                    elif self.isAutoMsg == -1:
+                        self.runCommand[0]['autoModeMsg'] = ''
+                        self.runCommand[1]['autoModeMsg'] = ''
+                        self.runCommand[2]['autoModeMsg'] = ''
+                        
                     res = requests.post(self.URL, headers=self.headers, data=json.dumps(self.runCommand))
                     if res.status_code==200 and len(res.json()):
                         self.tmp = res.json()
@@ -346,12 +355,15 @@ class SMART_RELAY():
                         self.startedTime_1 = self.startedTime_2 = self.startedTime_3 = time.time()
                         autoToggle = True
 
-                if self.runCommand[0]['mode'] == 'a' and time.time() - self.startedTime_1 > self.autoTimeLimit_1:
+                if self.runCommand[0]['mode'] == 'a' and time.time() - self.startedTime_1 > self.autoTimeLimit_1 and self.runCommand[0]['currentState'] == 1:
                     self.setRelay(1, 1)
-                if self.runCommand[1]['mode'] == 'a' and time.time() - self.startedTime_2 > self.autoTimeLimit_2:
+                    self.isAutoMsg = 0
+                if self.runCommand[1]['mode'] == 'a' and time.time() - self.startedTime_2 > self.autoTimeLimit_2 and self.runCommand[1]['currentState'] == 1:
                     self.setRelay(2, 1)
-                if self.runCommand[2]['mode'] == 'a' and time.time() - self.startedTime_3 > self.autoTimeLimit_3:
+                    self.isAutoMsg = 1
+                if self.runCommand[2]['mode'] == 'a' and time.time() - self.startedTime_3 > self.autoTimeLimit_3 and self.runCommand[2]['currentState'] == 1:
                     self.setRelay(3, 1)
+                    self.isAutoMsg = 2
                 # print(time.time() - self.startedTime_3, self.autoTimeLimit_3)
 
                 if self.runCommand[0]['mode'] == '1':
