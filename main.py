@@ -13,7 +13,7 @@ import threading
 import time
 import pickle
 
-VERSION = '1.0'
+VERSION = '1.1'
 
 class SMART_RELAY():
     def __init__(self):
