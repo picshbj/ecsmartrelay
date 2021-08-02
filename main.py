@@ -77,7 +77,8 @@ class SMART_RELAY():
             self.server_led.setOutputDirection(0)
             self.waterSensor_H_led.setOutputDirection(0)
             self.waterSensor_L_led.setOutputDirection(0)
-        except Exception:
+        except Exception as e:
+            print(e)
             # self.saveparams()
             self.reboot_signal = True
             os.system('reboot')
@@ -237,6 +238,19 @@ class SMART_RELAY():
                         #[{'mode': 'x', 'schedule': None, 'period': None, 'autoModeMsg': None, 'currentState': 0, 'autoTimeLimit': 0}, 
                         # {'mode': 'x', 'schedule': None, 'period': None, 'autoModeMsg': None, 'currentState': 0, 'autoTimeLimit': 0}, 
                         # {'mode': 'a', 'schedule': None, 'period': None, 'autoModeMsg': None, 'currentState': 0, 'autoTimeLimit': 6430}]
+
+                        # update
+                        if self.tmp[0]['mode'] == 'u' or self.tmp[1]['mode'] == 'u' or self.tmp[2]['mode'] == 'u':
+                            try:
+                                print('update!!!')
+                                if float(self.tmp[0]['period']) > float(VERSION):
+                                    # update here
+                                    os.system('python3 /root/updater.py')
+                                    self.reboot_signal = True
+                                    break
+                            except Exception as e:
+                                print(e)
+
                         if self.tmp[0]['mode'] != 'x':
                             self.runCommand[0] = self.tmp[0]
                             self.autoTimeLimit_1 = self.tmp[0]['autoTimeLimit']
@@ -251,17 +265,6 @@ class SMART_RELAY():
                             self.saveparams()
                         self.server_led.setValue(1)
                         count = 0
-
-                        # update
-                        if self.runCommand[0]['mode'] == 'u' or self.runCommand[1]['mode'] == 'u' or self.runCommand[2]['mode'] == 'u':
-                            try:
-                                if float(self.runCommand[0]['period']) > float(VERSION):
-                                    # update here
-                                    os.system('python3 /root/updater.py')
-                                    self.reboot_signal = True
-                                    break
-                            except Exception as e:
-                                print(e)
                         
                         if self.runCommand[0]['mode'] == 's' or self.runCommand[1]['mode'] == 's' or self.runCommand[2]['mode'] == 's' or self.runCommand[0]['mode'] == 'r' or self.runCommand[1]['mode'] == 'r' or self.runCommand[2]['mode'] == 'r':
                             self.updateSchedule()
@@ -291,6 +294,7 @@ class SMART_RELAY():
             # print('count:', count)
             if count > 4:
                 self.reboot_signal = True
+                # print('count out.. reboot')
                 break
 
             time.sleep(10)
