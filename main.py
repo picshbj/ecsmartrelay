@@ -279,6 +279,7 @@ async def recv_handler(ws):
                 await ws.send(pData)
                 await asyncio.sleep(5)
                 os.system('reboot')
+                SERVER_STATUS = False
             
             elif d['METHOD'] == 'OTA':
                 path = '/root/main.py'
@@ -295,6 +296,7 @@ async def recv_handler(ws):
                 }
                 pData = json.dumps(params)
                 await ws.send(pData)
+                SERVER_STATUS = False
                     
 
         except Exception as e:
