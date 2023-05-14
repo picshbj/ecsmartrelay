@@ -28,7 +28,7 @@ SERVER_STATUS = True
 Manual_Relay_Info = [[False, 0],[False, 0],[False, 0],[False, 0],[False, 0],[False, 0],[False, 0],[False, 0]]
 
 RELAYS_PARAM = []
-VERSION = '2.3'
+VERSION = '2.4'
 
 
 Relay_Pins = [RELAY1_PIN, RELAY2_PIN, RELAY3_PIN]
@@ -225,7 +225,7 @@ async def update(ws):
             await ws.send(pData)
 
 async def recv_handler(ws):
-    global RELAYS_PARAM, SERVER_STATUS
+    global RELAYS_PARAM, SERVER_STATUS, REBOOT_FLAG
     
     while True:
         await asyncio.sleep(0)
@@ -280,6 +280,7 @@ async def recv_handler(ws):
                 await asyncio.sleep(5)
                 os.system('reboot')
                 SERVER_STATUS = False
+                REBOOT_FLAG = True
             
             elif d['METHOD'] == 'OTA':
                 path = '/root/main.py'
@@ -297,6 +298,7 @@ async def recv_handler(ws):
                 pData = json.dumps(params)
                 await ws.send(pData)
                 SERVER_STATUS = False
+                REBOOT_FLAG = True
                     
 
         except Exception as e:
@@ -306,8 +308,9 @@ async def recv_handler(ws):
             
 
 async def main():
-    global SERVER_STATUS
+    global SERVER_STATUS, REBOOT_FLAG
     readParams()
+    REBOOT_FLAG = False
     
     while True:
         print('Updating Relays..')
@@ -326,6 +329,9 @@ async def main():
             print('Main Error:', e)
             SERVER_STATUS = False
             await asyncio.sleep(1)
+        
+        if REBOOT_FLAG:
+            break
 
 loop = asyncio.get_event_loop()
 loop.run_until_complete(main())
