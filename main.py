@@ -1,520 +1,330 @@
-import base64
-import requests, json
-
-from pyaes import *
-from pyaes import aes
-
-from common import *
-
-import datetime
+import json
+import websockets
+import asyncio
 import os
-import onionGpio
-import threading
-import time
-import pickle
-
-VERSION = '1.2'
-
-class SMART_RELAY():
-    def __init__(self):
-        # init mac address
-        self.macAddr = ''
-        self.setMacAddr()
-        self.reboot_signal = False
-
-        self.startedTime_1 = 0
-        self.startedTime_2 = 0
-        self.startedTime_3 = 0
-        self.autoTimeLimit_1 = 0
-        self.autoTimeLimit_2 = 0
-        self.autoTimeLimit_3 = 0
-        self.isAutoMsg = -1
-
-        # get server address and port
-        self.server_ip, self.port = self.getServerInfo()
+import datetime
+# import onionGpio
+import time 
+import shutil
         
-        self.URL = 'http://%s:%s/device/order/%s' % (self.server_ip, self.port, self.macAddr[-4:])
-        self.headers = {'Content-Type': 'application/json'}
-        self.runCommand = [
-            {'mode': '0', 
-            'schedule': '',
-            'period': '',
-            'autoModeMsg': '',
-            'currentState': 0,
-            'autoTimeLimit': 0},
-            {'mode': '0', 
-            'schedule': '',
-            'period': '',
-            'autoModeMsg': '',
-            'currentState': 0,
-            'autoTimeLimit': 0},
-            {'mode': '0', 
-            'schedule': '',
-            'period': '',
-            'autoModeMsg': '',
-            'currentState': 0,
-            'autoTimeLimit': 0}
-        ]
+# RELAY1_PIN = onionGpio.OnionGpio(15)
+# RELAY2_PIN = onionGpio.OnionGpio(16)
+# RELAY3_PIN = onionGpio.OnionGpio(17)
+# waterSensor_H = onionGpio.OnionGpio(19)
+# waterSensor_L = onionGpio.OnionGpio(18)
+# network_led = onionGpio.OnionGpio(2)
+# server_led = onionGpio.OnionGpio(3)
+# waterSensor_H_led = onionGpio.OnionGpio(1)
+# waterSensor_L_led = onionGpio.OnionGpio(0)
 
+RELAY1_PIN = 15
+RELAY2_PIN = 16
+RELAY3_PIN = 17
+network_led = 2
+server_led = 3
+
+
+SERVER_STATUS = True
+Manual_Relay_Info = [[False, 0],[False, 0],[False, 0],[False, 0],[False, 0],[False, 0],[False, 0],[False, 0]]
+
+RELAYS_PARAM = []
+VERSION = '2.1'
+
+
+Relay_Pins = [RELAY1_PIN, RELAY2_PIN, RELAY3_PIN]
+res = os.popen('ifconfig br-wlan | grep HWaddr').readline()
+mac = res.lstrip().split('HWaddr')[1][1:-1].replace(':','').replace(' ', '')
+setting_id = mac[-4:]
+uri = 'wss://admin.azmo.kr/azmo_ws?%s' % (setting_id)
+
+os.system('fast-gpio set-output 15')
+time.sleep(1)
+os.system('fast-gpio set-output 16')
+time.sleep(1)
+os.system('fast-gpio set-output 17')
+time.sleep(1)
+os.system('fast-gpio set-output 2')
+time.sleep(1)
+os.system('fast-gpio set-output 3')
+time.sleep(1)
+
+def setGpio(num, value):
+    os.system('fast-gpio set %d %d' % (num, value))
+
+def saveParams(RELAYS_PARAM):
+    params = {
+        "CONTROL": [json.loads(RELAYS_PARAM[0]),
+                    json.loads(RELAYS_PARAM[1]),
+                    json.loads(RELAYS_PARAM[2])
+                    ]
+        }
+    with open('/root/saved3.json', 'w', encoding='utf-8') as make_file:
+        json.dump(params, make_file, indent='\t')
+
+def checkNetwork():
+    res = os.popen('ping -c 1 -W 1 -w 1 8.8.8.8 | grep loss').readline()
+    if '100%' in res:
+        setGpio(network_led, 0)
+        setGpio(server_led, 0)
+        return False
+    else:
+        setGpio(network_led, 1)
+        return True
+
+def readParams():
+    relay_list = [1,2,3]
+    if os.path.exists('/root/saved3.json'):
+        with open('/root/saved3.json', 'r', encoding='utf-8') as read_file:
+            d = json.load(read_file)
+            for relay in d['CONTROL']:
+                j = json.dumps(relay)
+                jj = int(json.loads(j)["RELAY"])
+                relay_list.remove(jj)
+                RELAYS_PARAM.append(j)
+            
+            for relay in relay_list:
+                j = '''{"RELAY": "%d", "NAME": "", "MODE": "onoff", "ONOFFINFO": "off"}''' % (relay)
+                RELAYS_PARAM.append(j)
+                
+    else:
+        pData = '''
+{
+	"CONTROL": [
+		{
+			"RELAY": "1",
+			"NAME": "RELAY1",
+			"MODE": "onoff",
+			"ONOFFINFO": "off"
+		},
+		{
+			"RELAY": "2",
+			"NAME": "RELAY2",
+			"MODE": "onoff",
+			"ONOFFINFO": "off"
+		},
+		{
+			"RELAY": "3",
+			"NAME": "RELAY3",
+			"MODE": "onoff",
+			"ONOFFINFO": "off"
+		}
+	]
+}
+'''
+        with open('/root/saved3.json', 'w', encoding='utf-8') as save_file:
+            save_file.write(pData)
+        
+        with open('/root/saved3.json', 'r', encoding='utf-8') as read_file:
+            d = json.load(read_file)
+            for relay in d['CONTROL']:
+                RELAYS_PARAM.append(json.dumps(relay))
+
+        # RELAYS_PARAM = ['{"RELAY":"1", "MODE":"onoff", "SETINFO":"off"}', '{"RELAY":"2", "MODE":"onoff", "SETINFO":"off"}', '{"RELAY":"3", "MODE":"onoff", "SETINFO":"off"}', '{"RELAY":"4", "MODE":"onoff", "SETINFO":"off"}', '{"RELAY":"5", "MODE":"onoff", "SETINFO":"off"}', '{"RELAY":"6", "MODE":"onoff", "SETINFO":"off"}', '{"RELAY":"7", "MODE":"onoff", "SETINFO":"off"}', '{"RELAY":"8", "MODE":"onoff", "SETINFO":"off"}']
+
+
+def runManualMode(ONOFFINFO):
+    if ONOFFINFO == 'on': return True
+    else: return False
+                
+def runPeriodictMode(WEEKINFO):
+    try:
+        # "SETINFO": {"START_DT": "20220909", "REPEAT_DAY": "15", "START_TIME": "0030", "END_TIME": "0100"}}
+        scheduled_date = datetime.datetime.strptime(WEEKINFO['START_DT'], '%Y-%m-%d').replace(tzinfo=datetime.timezone(datetime.timedelta(hours=9)))
+        now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9)))
+        diff = now - scheduled_date
+
+        if diff.days % int(WEEKINFO['REPEAT_DAY']) == 0:
+            if int(WEEKINFO['START_TIME']) <= now.hour*100 + now.minute < int(WEEKINFO['END_TIME']):
+                return True
+
+        return False
+    except Exception as e:
+        print('WEEK INFO ERROR:', e)
+        return False
+
+def runWeeklyRepeatMode(REPEATINFO):
+    try:
+        # "SETINFO": [{"WEEK_INFO": "1", "START_TIME": "0100", "END_TIME": "0200"}, {"WEEK_INFO": "2", "START_TIME": "0100", "END_TIME": "0200"}]
+        # Mon(1), Tue(2), Wed(3), Thu(4), Fri(5), Sat(6), Sun(7)
+        now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9)))
+        
+        for element in REPEATINFO:
+            if int(element['WEEK_INFO']) == now.weekday()+1:
+                if int(element['START_TIME']) <= now.hour*100 + now.minute < int(element['END_TIME']):
+                    return True
+        
+        return False
+    except Exception as e:
+        print('WEEK INFO ERROR:', e)
+        return False
+
+
+def updateRelay():
+    # global RELAYS_PARAM, Manual_Relay_Info, Relay_Pins
+    
+    try:
+        print('\n--------------- checking relay params ---------------')
+        for idx, relay in enumerate(RELAYS_PARAM):
+            result = False
+            
+            relay = json.loads(relay)
+            print(relay)
+            
+            if relay['MODE'] == 'onoff':   # manual mode
+                result = runManualMode(relay['ONOFFINFO'])
+                if relay['ONOFFINFO'] == 'on' and Manual_Relay_Info[idx][0] == False:
+                    Manual_Relay_Info[idx][0] = True
+                    Manual_Relay_Info[idx][1] = time.time()
+                elif relay['ONOFFINFO'] == 'off': Manual_Relay_Info[idx][0] = False
+                
+            
+            elif relay['MODE'] == 'repeat':   # weekly repeat mode
+                result = runWeeklyRepeatMode(relay['REPEATINFO'])
+                Manual_Relay_Info[idx][0] = False
+
+            elif relay['MODE'] == 'week': # periodic mode
+                result = runPeriodictMode(relay['WEEKINFO'])
+                Manual_Relay_Info[idx][0] = False
+                
+            
+            if Manual_Relay_Info[idx][0] == True and time.time() - Manual_Relay_Info[idx][1] > 60*20:
+                result = False
+                RELAYS_PARAM[idx] = '''{"RELAY": "%d", "NAME": "%s", "MODE": "onoff", "ONOFFINFO": "off"}''' % (idx+1, relay['NAME'])
+                Manual_Relay_Info[idx][0] = False
+                saveParams(RELAYS_PARAM)
+
+
+            if result:
+                setGpio(Relay_Pins[idx], 0) # 0 means on
+            else:
+                setGpio(Relay_Pins[idx], 1) # 1 means off
+
+        print('-----------------------------------------------------\n')
+    except Exception as e:
+        print('Update Realy Error:', e)
+
+async def update(ws):
+    global SERVER_STATUS
+    ping_pong_time_check = 0
+    while True:
+        if not SERVER_STATUS: break
         try:
-            # init gpio ports
-            self.relay1 = onionGpio.OnionGpio(15)
-            self.relay2 = onionGpio.OnionGpio(16)
-            self.relay3 = onionGpio.OnionGpio(17)
-            self.waterSensor_H = onionGpio.OnionGpio(19)
-            self.waterSensor_L = onionGpio.OnionGpio(18)
-            self.network_led = onionGpio.OnionGpio(2)
-            self.server_led = onionGpio.OnionGpio(3)
-            self.waterSensor_H_led = onionGpio.OnionGpio(1)
-            self.waterSensor_L_led = onionGpio.OnionGpio(0)
-            # set relay off
-            self.relay1.setOutputDirection(1)
-            self.relay2.setOutputDirection(1)
-            self.relay3.setOutputDirection(1)
-            self.waterSensor_H.setInputDirection()
-            self.waterSensor_L.setInputDirection()
-            self.network_led.setOutputDirection(0)
-            self.server_led.setOutputDirection(0)
-            self.waterSensor_H_led.setOutputDirection(0)
-            self.waterSensor_L_led.setOutputDirection(0)
+            await asyncio.sleep(5)
+            updateRelay()
+            checkNetwork()
         except Exception as e:
-            print(e)
-            # self.saveparams()
-            self.reboot_signal = True
-            os.system('reboot')
+            print('update error', e)
 
-        # self.runCommand = ''
-        self.loadparams()
-        print(self.runCommand)
+        # ping pong 
+        if int(time.time()) - ping_pong_time_check > 20:
+            ping_pong_time_check = int(time.time())
+            params = {
+                "METHOD": "PING"
+            }
+            pData = json.dumps(params)
+            await ws.send(pData)
 
-        # init run sequence
-        self.runCommand[0] = self.runCommand[0]
-        self.runCommand[1] = self.runCommand[1]
-        self.runCommand[2] = self.runCommand[2]
-        # ['Run Mode', 'Schedule', 'CurrentState']
-        ### Run Mode
-        # 1,0 -> [M]anual
-        # S -> [S]cheduled
-        # A -> Water Works with [W]ater level sensor
-        # R -> Repeated
-        ### Schedule
-        # Monday/Tuesday/Wednesday/Thursday/Friday/Saturday/Sunday
-        # ex) '0/06000910/23000200,06000910/23000200,06000910/
-        #      23000200,06000910/23000200/23000200,06000910
-
-        # schedule time min : 0000
-        # schedule time max : 2400
-
-        self.Run_Schedule = ''.zfill(60*24)
-        # Schedule : 60 * 24 byte
-        # 3 bits for CH3 | CH2 | CH1
-        # ex) 7 -> ON | ON | ON
-        # ex) 5 -> ON | OFF| ON
-        self.updateSchedule()
-
-        self.recv_thread_state = True
-        self.run_thread_state = True
-
-        self.watchdog_th = threading.Thread(target=self.network_watchdog, args=())
-        self.watchdog_th.start()
-
-        self.run_th = threading.Thread(target=self.run_process, args=())
-        self.run_th.start()
-
-        # create and run thread
-        self.recv_th = threading.Thread(target=self.recv_process, args=())
-        self.recv_th.start()
+async def recv_handler(ws):
+    global RELAYS_PARAM, SERVER_STATUS
     
-
-    def network_watchdog(self):
-        while True:
-            if self.checkNetwork():
-                self.recv_thread_state = True
-            else:
-                self.recv_thread_state = False
-
-            if self.reboot_signal:
-                break
-
-            time.sleep(1)
-
-    def saveparams(self):
-        with open('/root/params.pickle', 'wb') as fw:
-            pickle.dump(self.runCommand, fw)
-    
-    def loadparams(self):
+    while True:
+        await asyncio.sleep(0)
+        if not SERVER_STATUS: break
         try:
-            if os.path.isfile('/root/params.pickle'):
-                with open('/root/params.pickle', 'rb') as fr:
-                    self.runCommand = pickle.load(fr)
-
-            else:
-                self.runCommand = [
-                    {'mode': '0', 
-                    'schedule': '',
-                    'period': '',
-                    'autoModeMsg': '',
-                    'currentState': 0,
-                    'autoTimeLimit': 0},
-                    {'mode': '0', 
-                    'schedule': '',
-                    'period': '',
-                    'autoModeMsg': '',
-                    'currentState': 0,
-                    'autoTimeLimit': 0},
-                    {'mode': '0', 
-                    'schedule': '',
-                    'period': '',
-                    'autoModeMsg': '',
-                    'currentState': 0,
-                    'autoTimeLimit': 0}
-                ]
-        except Exception:
-            pass
-        
-        self.autoTimeLimit_1 = self.runCommand[0]['autoTimeLimit']
-        self.autoTimeLimit_2 = self.runCommand[1]['autoTimeLimit']
-        self.autoTimeLimit_3 = self.runCommand[2]['autoTimeLimit']
-        
-    def json_logging(self, data):
-        self.resultFile = open('/root/output.txt', 'a')
-        now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9)))
-        current_time = '[%d-%02d-%02d %02d:%02d:%02d]-----------------------------------------\n' % (now.year, now.month, now.day, now.hour, now.minute, now.second)
-        self.resultFile.write(current_time)
-        for i in range(3):
-            mode = data[i]['mode']
+            data = await ws.recv()
+            d = json.loads(data)
+            print('recieved:', d)
             
-            if data[i]['schedule'] == None:
-                schedule = 'None'
-            else:
-                schedule = data[i]['schedule']
-
-            if data[i]['period'] == None:
-                period = 'None'
-            else:
-                period = data[i]['period']
-
-            if data[i]['autoModeMsg'] == None:
-                autoModeMsg = 'None'
-            else:
-                autoModeMsg = data[i]['autoModeMsg']
-
-            currentState = str(data[i]['currentState'])
-            autoTimeLimit = str(data[i]['autoTimeLimit'])
-
-            sData = "{'mode': %s, 'schedule': %s, 'period': %s, 'autoModeMsg': %s, 'currentState': %s, 'autoTimeLimit': %s}\n" % (mode, schedule, period, autoModeMsg, currentState, autoTimeLimit)
-            self.resultFile.write(sData)
-        self.resultFile.close()
-
-    def msg_logging(self, data):
-        self.resultFile = open('/root/output.txt', 'a')
-        now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9)))
-        current_time = '[%d-%02d-%02d %02d:%02d:%02d]-----------------------------------------\n' % (now.year, now.month, now.day, now.hour, now.minute, now.second)
-        self.resultFile.write(current_time)
-        self.resultFile.write(data)
-        self.resultFile.close()
-
-    def recv_process(self):
-        count = 0
-        while True:
-            if self.reboot_signal:
-                break
-
-            if self.recv_thread_state:
-                try:
-                    if self.isAutoMsg != -1:
-                        self.runCommand[self.isAutoMsg]['autoModeMsg'] = '수위센서 이상이 감지되어 릴레이 작동을 중지하였습니다. 센서를 확인해주세요.'
-                        self.isAutoMsg = -1
-                    elif self.isAutoMsg == -1:
-                        self.runCommand[0]['autoModeMsg'] = ''
-                        self.runCommand[1]['autoModeMsg'] = ''
-                        self.runCommand[2]['autoModeMsg'] = ''
-                        
-                    res = requests.post(self.URL, headers=self.headers, data=json.dumps(self.runCommand))
-                    if res.status_code==200 and len(res.json()):
-                        self.tmp = res.json()
-                        # print(self.tmp)
-                        # self.json_logging(self.tmp)
-                        #[{'mode': 'x', 'schedule': None, 'period': None, 'autoModeMsg': None, 'currentState': 0, 'autoTimeLimit': 0}, 
-                        # {'mode': 'x', 'schedule': None, 'period': None, 'autoModeMsg': None, 'currentState': 0, 'autoTimeLimit': 0}, 
-                        # {'mode': 'a', 'schedule': None, 'period': None, 'autoModeMsg': None, 'currentState': 0, 'autoTimeLimit': 6430}]
-
-                        # update
-                        if self.tmp[0]['mode'] == 'u' or self.tmp[1]['mode'] == 'u' or self.tmp[2]['mode'] == 'u':
-                            try:
-                                print('update!!!')
-                                if float(self.tmp[0]['period']) > float(VERSION):
-                                    # update here
-                                    os.system('python3 /root/updater.py')
-                                    self.reboot_signal = True
-                                    break
-                            except Exception as e:
-                                print(e)
-
-                        if self.tmp[0]['mode'] != 'x':
-                            self.runCommand[0] = self.tmp[0]
-                            self.autoTimeLimit_1 = self.tmp[0]['autoTimeLimit']
-                            self.saveparams()
-                        if self.tmp[1]['mode'] != 'x':
-                            self.runCommand[1] = self.tmp[1]
-                            self.autoTimeLimit_2 = self.tmp[1]['autoTimeLimit']
-                            self.saveparams()
-                        if self.tmp[2]['mode'] != 'x':
-                            self.runCommand[2] = self.tmp[2]
-                            self.autoTimeLimit_3 = self.tmp[2]['autoTimeLimit']
-                            self.saveparams()
-                        self.server_led.setValue(1)
-                        count = 0
-                        
-                        if self.runCommand[0]['mode'] == 's' or self.runCommand[1]['mode'] == 's' or self.runCommand[2]['mode'] == 's' or self.runCommand[0]['mode'] == 'r' or self.runCommand[1]['mode'] == 'r' or self.runCommand[2]['mode'] == 'r':
-                            self.updateSchedule()
-
-
-                    elif res.status_code==200:
-                        self.server_led.setValue(1)
-                        count = 0
-                        # self.msg_logging('response: 200, no data\n')
-                    else:
-                        self.server_led.setValue(0)
-                        count += 1
-                        # get server address and port
-                        # print('server ip reset..')
-                        # self.msg_logging('server ip reset..\n')
-                        self.server_ip, self.port = self.getServerInfo()
-                        self.URL = 'http://%s:%s/device/order/%s' % (self.server_ip, self.port, self.macAddr[-4:])
-                except Exception as e:
-                    self.server_led.setValue(0)
-                    count += 1
-                    # print('recv_process error')
-                    # self.msg_logging('recv_process error\n')
-                    print(e)
-            else:
-                count += 1
+            if d['METHOD'] == 'CALL_A':
+                params = {
+                "METHOD": "CALL_R",
+                "CONTROL": [json.loads(RELAYS_PARAM[0]),
+                            json.loads(RELAYS_PARAM[1]),
+                            json.loads(RELAYS_PARAM[2])
+                        ]
+                }
+                pData = json.dumps(params)
+                await ws.send(pData)
+                setGpio(server_led, 1)
             
-            # print('count:', count)
-            if count > 4:
-                self.reboot_signal = True
-                # print('count out.. reboot')
-                break
+            elif d['METHOD'] == 'TOTAL_STATUS':
+                params = {
+                    "METHOD": "TOTAL_STATUS",
+                    "DEVICE_ID": setting_id,
+                    "SENSOR_STATUS": False,
+                    "VERSION": VERSION
+                }
+                pData = json.dumps(params)
+                await ws.send(pData)
+                
+            
+            elif d['METHOD'] == 'UPT_R':
+                for relay in d['CONTROL']:
+                    # print(relay)
+                    if relay['RELAY'] == "1":
+                        RELAYS_PARAM[0] = json.dumps(relay)
+                    elif relay['RELAY'] == "2":
+                        RELAYS_PARAM[1] = json.dumps(relay)
+                    elif relay['RELAY'] == "3":
+                        RELAYS_PARAM[2] = json.dumps(relay)
+                saveParams(RELAYS_PARAM)
+                setGpio(server_led, 1)
 
-            time.sleep(10)
-        # self.msg_logging('reboot\n')
-        os.system('reboot')
+            elif d['METHOD'] == 'R_START':
+                params = {
+                    "METHOD": "R_START",
+                    "RESULT": True
+                }
+                pData = json.dumps(params)
+                await ws.send(pData)
+                await asyncio.sleep(5)
+                os.system('shutdown -r now')
+            
+            elif d['METHOD'] == 'OTA':
+                path = '/root/main.py'
+                if os.path.isfile(path):
+                    os.remove(path)
+                os.system('wget -P /root/ https://raw.githubusercontent.com/picshbj/ecsmartrelay/master/main.py')
 
+                await asyncio.sleep(10)
+                os.system('reboot')
 
-    def run_process(self):
-        toggle = True
-        today = -1
-        autoToggle = False
-        while True:
-            if self.reboot_signal:
-                break
-
-            if self.run_thread_state:
-                now = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9)))
-
-                # scheduled relay control
-                if now.second == 0 and toggle:
-                    if today != datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9))).weekday():
-                        today = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9))).weekday()
-                        self.updateSchedule()
-
-                    index = now.hour*60 + now.minute
-                    runbit = 7-int(self.Run_Schedule[index])
-                    # runbit    ->  CH3 | CH2 | CH1
-                    #   7       ->  1   | 1   | 1
-                    #   0       ->  0   | 0   | 0
-                    CH3 = runbit//4
-                    CH2 = (runbit%4)//2
-                    CH1 = runbit%2
-
-                    if self.runCommand[0]['mode'] == 's' or self.runCommand[0]['mode'] == 'r':
-                        self.setRelay(1, CH1)
-                    if self.runCommand[1]['mode'] == 's' or self.runCommand[1]['mode'] == 'r':
-                        self.setRelay(2, CH2)
-                    if self.runCommand[2]['mode'] == 's' or self.runCommand[2]['mode'] == 'r':
-                        self.setRelay(3, CH3)
-                    toggle = False
-                else:
-                    toggle = True
-
-                # relay control with water level sensor
-                # Water sensor ON when no water -> gpio LOW when no water (pull-up)
-                low = int(self.waterSensor_L.getValue())
-                high = int(self.waterSensor_H.getValue())
-
-                self.waterSensor_H_led.setValue(high)
-                self.waterSensor_L_led.setValue(low)
-
-                if low and high:    # Water tank Full
-                    if self.runCommand[0]['mode'] == 'a': self.setRelay(1, 1)
-                    if self.runCommand[1]['mode'] == 'a': self.setRelay(2, 1)
-                    if self.runCommand[2]['mode'] == 'a': self.setRelay(3, 1)
-                    autoToggle = False
-                elif not low and not high: # Water tank Empty
-                    if not autoToggle:
-                        if self.runCommand[0]['mode'] == 'a': self.setRelay(1, 0)
-                        if self.runCommand[1]['mode'] == 'a': self.setRelay(2, 0)
-                        if self.runCommand[2]['mode'] == 'a': self.setRelay(3, 0)
-                        self.startedTime_1 = self.startedTime_2 = self.startedTime_3 = time.time()
-                        autoToggle = True
-
-                if self.runCommand[0]['mode'] == 'a' and time.time() - self.startedTime_1 > self.autoTimeLimit_1 and self.runCommand[0]['currentState'] == 1:
-                    self.setRelay(1, 1)
-                    self.isAutoMsg = 0
-                if self.runCommand[1]['mode'] == 'a' and time.time() - self.startedTime_2 > self.autoTimeLimit_2 and self.runCommand[1]['currentState'] == 1:
-                    self.setRelay(2, 1)
-                    self.isAutoMsg = 1
-                if self.runCommand[2]['mode'] == 'a' and time.time() - self.startedTime_3 > self.autoTimeLimit_3 and self.runCommand[2]['currentState'] == 1:
-                    self.setRelay(3, 1)
-                    self.isAutoMsg = 2
-                # print(time.time() - self.startedTime_3, self.autoTimeLimit_3)
-
-                if self.runCommand[0]['mode'] == '1':
-                    self.setRelay(1, 0)
-                elif self.runCommand[0]['mode'] == '0':
-                    self.setRelay(1, 1)
-                if self.runCommand[1]['mode'] == '1':
-                    self.setRelay(2, 0)
-                elif self.runCommand[1]['mode'] == '0':
-                    self.setRelay(2, 1)
-                if self.runCommand[2]['mode'] == '1':
-                    self.setRelay(3, 0)
-                elif self.runCommand[2]['mode'] == '0':
-                    self.setRelay(3, 1)
+                params = {
+                    "METHOD": "OTA",
+                    "RESULT": True
+                }
+                pData = json.dumps(params)
+                await ws.send(pData)
                     
-            time.sleep(0.5)
 
-
-    def updateSchedule(self):
-        try:
-            ch1 = self.convert_schedule_to_minuteSequence(self.runCommand[0]['mode'], self.runCommand[0]['schedule'])  # ex) 23000200,06000910
-            ch2 = self.convert_schedule_to_minuteSequence(self.runCommand[1]['mode'], self.runCommand[1]['schedule'])
-            ch3 = self.convert_schedule_to_minuteSequence(self.runCommand[2]['mode'], self.runCommand[2]['schedule'])
-        
-            res = list(''.zfill(60*24))
-            for i in range(len(res)):
-                bit = 0
-                if ch1[i] == '1':
-                    bit += 1
-                if ch2[i] == '1':
-                    bit += 2
-                if ch3[i] == '1':
-                    bit += 4
-                res[i] = str(bit)
-            self.Run_Schedule = ''.join(res)
         except Exception as e:
-            print(22, e)
-
-
-    def convert_schedule_to_minuteSequence(self, mode, strData):
-        # EX
-        # input     : strData = 23000200,06000910
-        # output    : 1440 byte minute sequence
-        
-        today = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=9))).weekday()
-        res = ''.zfill(60*24)
-        if mode == 's':
-            strData = strData.split('/')[today]
-            for data in strData.split(','):
-                if data == '0':
-                    break
-                elif len(data) == 8:
-                    start = data[:4]
-                    end = data[4:]
-                    start_sequence = int(start[:2])*60 + int(start[2:])
-                    end_sequence = int(end[:2])*60 + int(end[2:])
-
-                    res = list(res)
-                    for i in range(start_sequence, end_sequence):
-                        res[i] = '1'
-                    res = ''.join(res)
-                else:
-                    print('schedule parsing error')
-            # self.resultFile = open('/root/output.txt', 'a')
-            # for i in range(24):
-            #     h = res[60*i:60*(i+1)]
-            #     print(i, 'hours : ', end='')
-            #     strData = '%d hours : ' % i
-            #     self.resultFile.write(strData)
-            #     for j in range(6):
-            #         strData = h[10*j:10*(j+1)] + '_'
-            #         print(strData, end='')
-            #         self.resultFile.write(strData)
-            #     print('')
-            #     self.resultFile.write('\n')
-            # self.resultFile.write('\n')
-            # self.resultFile.close()
-        elif mode == 'r':
-            if len(strData) == 4:
-                hours = int(strData[0:2])
-                minutes = int(strData[2:4])
-        return res
-
-
-    def setRelay(self, ch, output):
-        # output : 0 -> ON
-        # output : 1 -> OFF
-        if ch == 1:
-            self.relay1.setValue(output)
-            if output == 0: self.runCommand[0]['currentState'] = 1
-            elif output == 1: self.runCommand[0]['currentState'] = 0
-        elif ch == 2:
-            self.relay2.setValue(output)
-            if output == 0: self.runCommand[1]['currentState'] = 1
-            elif output == 1: self.runCommand[1]['currentState'] = 0
-        elif ch == 3:
-            self.relay3.setValue(output)
-            if output == 0: self.runCommand[2]['currentState'] = 1
-            elif output == 1: self.runCommand[2]['currentState'] = 0
-
-    def getServerInfo(self):
-        try:
-            # sync time
-            os.system('onion time sync')
+            SERVER_STATUS = False
+            print('Recieve Error', e)
             
-            r = requests.get(awslambdaurl)
-            ciphertext = base64.b64decode(r.text.replace('"', ''))
-            _aes = aes.AESModeOfOperationCBC(key.encode('utf-8'), iv = iv)
-            decrypted = b''
-            if len(ciphertext)%16 == 0:
-                it = len(ciphertext) // 16
-                for i in range(it):
-                    decrypted += _aes.decrypt(ciphertext[i*16:(i+1)*16])
-                decrypted = unpad(decrypted).decode('utf-8')
+            
 
-            data = decrypted.split('$')
-            # print(data)
-            server_ip = ''
-            port = 0
-            for d in data:
-                if 'SMART_RELAY_SERVER' in d:
-                    server_ip = d.split(',')[1]
-                    port = int(d.split(',')[2])
-                    break
+async def main():
+    global SERVER_STATUS
+    readParams()
+    
+    while True:
+        print('Updating Relays..')
+        updateRelay()
+        print('Creating a new websockets..')
+        SERVER_STATUS = True
+        os.system('ntpd -q -p ptbtime1.ptb.de')
+        
+        try:
+            async with websockets.connect(uri) as ws:
+                await asyncio.gather(
+                    recv_handler(ws),
+                    update(ws)
+                )
         except Exception as e:
-            print('network error.. reboot...')
-            os.system('reboot')
+            print('Main Error:', e)
+            SERVER_STATUS = False
+            await asyncio.sleep(1)
 
-        return server_ip, port
-
-    def setMacAddr(self):
-        res = os.popen('ifconfig br-wlan | grep HWaddr').readline()
-        self.macAddr = res.lstrip().split('HWaddr')[1][1:-1].replace(':','').replace(' ', '')
-
-    def checkNetwork(self):
-        res = os.popen('ping -c 1 -W 1 -w 1 8.8.8.8 | grep loss').readline()
-        if '100%' in res:
-            self.network_led.setValue(0)
-            self.server_led.setValue(0)
-            return False
-        else:
-            self.network_led.setValue(1)
-            return True
-
-
-if __name__ == '__main__':
-
-    sr = SMART_RELAY()
-    while not sr.reboot_signal:
-        pass
+loop = asyncio.get_event_loop()
+loop.run_until_complete(main())
+loop.close()
