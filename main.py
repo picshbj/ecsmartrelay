@@ -28,7 +28,7 @@ SERVER_STATUS = True
 Manual_Relay_Info = [[False, 0],[False, 0],[False, 0],[False, 0],[False, 0],[False, 0],[False, 0],[False, 0]]
 
 RELAYS_PARAM = []
-VERSION = '2.2'
+VERSION = '2.3'
 
 
 Relay_Pins = [RELAY1_PIN, RELAY2_PIN, RELAY3_PIN]
