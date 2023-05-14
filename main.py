@@ -28,7 +28,7 @@ SERVER_STATUS = True
 Manual_Relay_Info = [[False, 0],[False, 0],[False, 0],[False, 0],[False, 0],[False, 0],[False, 0],[False, 0]]
 
 RELAYS_PARAM = []
-VERSION = '2.1'
+VERSION = '2.2'
 
 
 Relay_Pins = [RELAY1_PIN, RELAY2_PIN, RELAY3_PIN]
@@ -278,7 +278,7 @@ async def recv_handler(ws):
                 pData = json.dumps(params)
                 await ws.send(pData)
                 await asyncio.sleep(5)
-                os.system('shutdown -r now')
+                os.system('reboot')
             
             elif d['METHOD'] == 'OTA':
                 path = '/root/main.py'
